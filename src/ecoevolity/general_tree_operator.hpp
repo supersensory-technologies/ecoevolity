@@ -28,6 +28,7 @@
 
 #include "basetree.hpp"
 #include "tree.hpp"
+#include "checkpoint.hpp"
 #include "rng.hpp"
 #include "assert.hpp"
 #include "math_util.hpp"
@@ -134,6 +135,16 @@ class BaseGeneralTreeOperatorTemplate {
         virtual std::string header_string() const = 0;
 
         virtual std::string to_string() const = 0;
+
+        // Everything about an operator that changes while the chain runs
+        // (tuning parameter, accept/reject counts, auto-optimization
+        // bookkeeping) as one line of exactly round-tripping text, so that a
+        // run can be checkpointed and resumed.
+        virtual std::string checkpoint_state() const = 0;
+
+        // Throws if the state was written by a different operator (name or
+        // weight)
+        virtual void restore_checkpoint_state(const std::string & state) = 0;
 };
 
 template<class TreeType>
@@ -409,6 +420,55 @@ class GeneralTreeOperatorInterface : public GeneralTreeOperatorTemplate<TreeType
             ss << "\n";
             return ss.str();
         }
+
+        std::string checkpoint_state() const {
+            std::ostringstream ss;
+            ss << this->get_name() << " "
+               << checkpoint::double_to_string(this->get_weight()) << " "
+               << checkpoint::double_to_string(this->get_coercable_parameter_value()) << " "
+               << this->get_number_accepted() << " "
+               << this->get_number_rejected() << " "
+               << this->get_number_accepted_for_correction() << " "
+               << this->get_number_rejected_for_correction() << " "
+               << this->get_auto_optimize_delay() << " "
+               << (this->auto_optimizing() ? 1 : 0);
+            return ss.str();
+        }
+
+        void restore_checkpoint_state(const std::string & state) {
+            std::vector<std::string> tokens = checkpoint::split_tokens(state);
+            if (tokens.size() != 9) {
+                throw EcoevolityError(
+                        "Malformed checkpoint state for operator " + this->get_name());
+            }
+            if (tokens.at(0) != this->get_name()) {
+                throw EcoevolityError(
+                        "Checkpoint state for operator " + tokens.at(0) +
+                        " does not match operator " + this->get_name() +
+                        "; was the configuration changed?");
+            }
+            if (checkpoint::string_to_double(tokens.at(1)) != this->get_weight()) {
+                throw EcoevolityError(
+                        "Checkpoint weight of operator " + this->get_name() +
+                        " does not match its weight in the configuration");
+            }
+            double tuning = checkpoint::string_to_double(tokens.at(2));
+            if (! std::isnan(tuning)) {
+                this->set_coercable_parameter_value(tuning);
+            }
+            this->op_.restore_counts(
+                    checkpoint::string_to_unsigned(tokens.at(3)),
+                    checkpoint::string_to_unsigned(tokens.at(4)),
+                    checkpoint::string_to_unsigned(tokens.at(5)),
+                    checkpoint::string_to_unsigned(tokens.at(6)));
+            this->set_auto_optimize_delay(checkpoint::string_to_unsigned(tokens.at(7)));
+            if (checkpoint::string_to_bool(tokens.at(8))) {
+                this->turn_on_auto_optimize();
+            }
+            else {
+                this->turn_off_auto_optimize();
+            }
+        }
 };
 
 
@@ -518,6 +578,17 @@ class Op {
         }
         void turn_off_auto_optimize() {
             this->auto_optimize_ = false;
+        }
+
+        void restore_counts(
+                unsigned int number_accepted,
+                unsigned int number_rejected,
+                unsigned int number_accepted_for_correction,
+                unsigned int number_rejected_for_correction) {
+            this->number_accepted_ = number_accepted;
+            this->number_rejected_ = number_rejected;
+            this->number_accepted_for_correction_ = number_accepted_for_correction;
+            this->number_rejected_for_correction_ = number_rejected_for_correction;
         }
 
     protected:

@@ -248,6 +248,436 @@ void BasePopulationTree::log_state(std::ostream& out,
     out << std::endl;
 }
 
+void BasePopulationTree::write_checkpoint_state(std::ostream & out) const {
+    const std::string problem = "Cannot write checkpoint: ";
+    std::vector< std::shared_ptr<PopulationNode> > nodes;
+    this->root_->pre_order(nodes);
+    const unsigned int n_leaves = this->root_->get_leaf_node_count();
+    const std::vector<std::string> & pop_labels = this->data_.get_population_labels();
+
+    // Node heights and population sizes are parameters that can be shared by
+    // more than one node, so they get their own tables and nodes refer to
+    // them by number. Heights of leaves (always fixed at zero) are not
+    // saved.
+    std::map<const PositiveRealParameter *, unsigned int> height_ids;
+    std::vector< std::shared_ptr<PositiveRealParameter> > height_params;
+    std::map<const PositiveRealParameter *, unsigned int> size_ids;
+    std::vector< std::shared_ptr<PositiveRealParameter> > size_params;
+    std::map< int, std::shared_ptr<PopulationNode> > nodes_by_index;
+
+    for (auto const & node : nodes) {
+        int index = node->get_index();
+        if (nodes_by_index.count(index) > 0) {
+            throw EcoevolityError(problem + "duplicate node index in tree");
+        }
+        nodes_by_index[index] = node;
+        if (node->is_leaf()) {
+            if ((index < 0) || (index >= static_cast<int>(n_leaves)) ||
+                    (node->get_label() != pop_labels.at(index))) {
+                throw EcoevolityError(problem + "leaf node does not match the data");
+            }
+            if ((node->get_height() != 0.0) ||
+                    (! node->get_height_parameter()->is_fixed())) {
+                throw EcoevolityError(problem + "unexpected height of a leaf node");
+            }
+        }
+        else {
+            if (! node->get_label().empty()) {
+                throw EcoevolityError(problem + "unexpected label of an internal node");
+            }
+            std::shared_ptr<PositiveRealParameter> hp = node->get_height_parameter();
+            if (height_ids.count(hp.get()) < 1) {
+                if ((node != this->root_) && hp->get_prior()) {
+                    throw EcoevolityError(problem + "unexpected prior on a non-root node height");
+                }
+                height_ids[hp.get()] = height_params.size();
+                height_params.push_back(hp);
+            }
+        }
+        std::shared_ptr<PositiveRealParameter> sp = node->get_population_size_parameter();
+        if (size_ids.count(sp.get()) < 1) {
+            if (sp->get_prior() && (sp->get_prior() != this->population_size_prior_)) {
+                throw EcoevolityError(problem + "unexpected prior on a population size");
+            }
+            size_ids[sp.get()] = size_params.size();
+            size_params.push_back(sp);
+        }
+    }
+    if (nodes_by_index.size() != nodes.size()) {
+        throw EcoevolityError(problem + "inconsistent node indices");
+    }
+
+    // The orderings of the heights and of the nodes affect which random node
+    // or height operators pick, so they are saved too
+    if ((this->node_heights_.size() != height_params.size()) ||
+            (this->pre_ordered_nodes_.size() != nodes.size())) {
+        throw EcoevolityError(problem + "tree has inconsistent node ordering");
+    }
+    std::vector<unsigned int> height_order;
+    for (auto const & hp : this->node_heights_) {
+        auto id = height_ids.find(hp.get());
+        if (id == height_ids.end()) {
+            throw EcoevolityError(problem + "node height ordering does not match tree");
+        }
+        height_order.push_back(id->second);
+    }
+    std::set<int> pre_order_indices;
+    for (auto const & node : this->pre_ordered_nodes_) {
+        auto found = nodes_by_index.find(node->get_index());
+        if ((found == nodes_by_index.end()) || (found->second != node)) {
+            throw EcoevolityError(problem + "node ordering does not match tree");
+        }
+        pre_order_indices.insert(node->get_index());
+    }
+    if (pre_order_indices.size() != nodes.size()) {
+        throw EcoevolityError(problem + "node ordering does not match tree");
+    }
+    std::set<unsigned int> height_order_set(height_order.begin(), height_order.end());
+    if (height_order_set.size() != height_params.size()) {
+        throw EcoevolityError(problem + "node height ordering does not match tree");
+    }
+
+    out << "leaf_count " << n_leaves << "\n";
+    out << "param alpha_of_height_beta_prior "
+        << checkpoint::double_to_string(this->alpha_of_node_height_beta_prior_->get_value()) << " "
+        << this->alpha_of_node_height_beta_prior_->is_fixed() << "\n";
+    out << "param beta_of_height_beta_prior "
+        << checkpoint::double_to_string(this->beta_of_node_height_beta_prior_->get_value()) << " "
+        << this->beta_of_node_height_beta_prior_->is_fixed() << "\n";
+    out << "param freq_1 "
+        << checkpoint::double_to_string(this->freq_1_->get_value()) << " "
+        << this->freq_1_->is_fixed() << "\n";
+    out << "param mutation_rate "
+        << checkpoint::double_to_string(this->mutation_rate_->get_value()) << " "
+        << this->mutation_rate_->is_fixed() << "\n";
+
+    out << "heights " << height_params.size() << "\n";
+    for (unsigned int i = 0; i < height_params.size(); ++i) {
+        out << "height " << i << " "
+            << checkpoint::double_to_string(height_params.at(i)->get_value()) << " "
+            << height_params.at(i)->is_fixed() << "\n";
+    }
+    out << "sizes " << size_params.size() << "\n";
+    for (unsigned int i = 0; i < size_params.size(); ++i) {
+        out << "size " << i << " "
+            << checkpoint::double_to_string(size_params.at(i)->get_value()) << " "
+            << size_params.at(i)->is_fixed() << " "
+            << (size_params.at(i)->get_prior() ? 1 : 0) << "\n";
+    }
+
+    // Nodes in pre-order, so the root comes first; children are listed in
+    // the order they have in the tree
+    out << "nodes " << nodes.size() << "\n";
+    for (auto const & node : nodes) {
+        out << "node " << node->get_index() << " ";
+        if (node->is_leaf()) {
+            out << "-1";
+        }
+        else {
+            out << height_ids.at(node->get_height_parameter().get());
+        }
+        out << " " << size_ids.at(node->get_population_size_parameter().get())
+            << " " << node->get_number_of_children();
+        for (auto const & child : node->get_all_children()) {
+            out << " " << child->get_index();
+        }
+        out << "\n";
+    }
+
+    out << "node_heights " << height_order.size();
+    for (auto id : height_order) {
+        out << " " << id;
+    }
+    out << "\n";
+    out << "pre_ordered_nodes " << this->pre_ordered_nodes_.size();
+    for (auto const & node : this->pre_ordered_nodes_) {
+        out << " " << node->get_index();
+    }
+    out << "\n";
+}
+
+void BasePopulationTree::read_checkpoint_state(
+        const std::vector<std::string> & lines) {
+    const std::string malformed = "Malformed tree state in checkpoint";
+    const std::string mismatch =
+            "The tree state in the checkpoint does not match the model "
+            "built from the configuration and data";
+    size_t pos = 0;
+    auto next_line = [&](const std::string & keyword, size_t number_of_tokens) -> std::vector<std::string> {
+        if (pos >= lines.size()) {
+            throw EcoevolityError(malformed + " (missing \'" + keyword + "\')");
+        }
+        std::vector<std::string> tokens = checkpoint::split_tokens(lines.at(pos));
+        ++pos;
+        if (tokens.empty() || (tokens.at(0) != keyword) ||
+                ((number_of_tokens > 0) && (tokens.size() != number_of_tokens))) {
+            throw EcoevolityError(malformed + " (expected \'" + keyword + "\')");
+        }
+        return tokens;
+    };
+
+    //////////////////////////////////////////////////////////////////////////
+    // Parse and validate
+
+    const unsigned int n_leaves = this->root_->get_leaf_node_count();
+    if (checkpoint::string_to_unsigned(next_line("leaf_count", 2).at(1)) != n_leaves) {
+        throw EcoevolityError(mismatch);
+    }
+
+    // Parameters of the tree that exist from the start and are updated in
+    // place
+    auto restore_parameter = [&](
+            const std::string & name,
+            std::shared_ptr<PositiveRealParameter> parameter) {
+        std::vector<std::string> tokens = next_line("param", 4);
+        if (tokens.at(1) != name) {
+            throw EcoevolityError(malformed + " (expected parameter " + name + ")");
+        }
+        double value = checkpoint::string_to_double(tokens.at(2));
+        bool fixed = checkpoint::string_to_bool(tokens.at(3));
+        if (parameter->is_fixed() != fixed) {
+            throw EcoevolityError(mismatch + " (parameter " + name + ")");
+        }
+        if (fixed) {
+            if (parameter->get_value() != value) {
+                throw EcoevolityError(mismatch + " (parameter " + name + ")");
+            }
+            return;
+        }
+        parameter->set_value(value);
+        parameter->store();
+    };
+    restore_parameter("alpha_of_height_beta_prior", this->alpha_of_node_height_beta_prior_);
+    restore_parameter("beta_of_height_beta_prior", this->beta_of_node_height_beta_prior_);
+    restore_parameter("freq_1", this->freq_1_);
+    restore_parameter("mutation_rate", this->mutation_rate_);
+
+    unsigned long n_heights = checkpoint::string_to_unsigned(next_line("heights", 2).at(1));
+    std::vector<double> height_values;
+    std::vector<bool> height_fixed;
+    for (unsigned long i = 0; i < n_heights; ++i) {
+        std::vector<std::string> tokens = next_line("height", 4);
+        if (checkpoint::string_to_unsigned(tokens.at(1)) != i) {
+            throw EcoevolityError(malformed + " (height numbering)");
+        }
+        height_values.push_back(checkpoint::string_to_double(tokens.at(2)));
+        height_fixed.push_back(checkpoint::string_to_bool(tokens.at(3)));
+    }
+    unsigned long n_sizes = checkpoint::string_to_unsigned(next_line("sizes", 2).at(1));
+    std::vector<double> size_values;
+    std::vector<bool> size_fixed;
+    std::vector<bool> size_has_prior;
+    for (unsigned long i = 0; i < n_sizes; ++i) {
+        std::vector<std::string> tokens = next_line("size", 5);
+        if (checkpoint::string_to_unsigned(tokens.at(1)) != i) {
+            throw EcoevolityError(malformed + " (population size numbering)");
+        }
+        size_values.push_back(checkpoint::string_to_double(tokens.at(2)));
+        size_fixed.push_back(checkpoint::string_to_bool(tokens.at(3)));
+        size_has_prior.push_back(checkpoint::string_to_bool(tokens.at(4)));
+    }
+
+    struct NodeRecord {
+        int index;
+        long height_id;
+        unsigned long size_id;
+        std::vector<int> children;
+    };
+    unsigned long n_nodes = checkpoint::string_to_unsigned(next_line("nodes", 2).at(1));
+    if (n_nodes < 3) {
+        throw EcoevolityError(malformed + " (too few nodes)");
+    }
+    std::vector<NodeRecord> records;
+    std::map<int, unsigned long> record_by_index;
+    std::set<int> seen_as_child;
+    unsigned long n_leaf_records = 0;
+    for (unsigned long i = 0; i < n_nodes; ++i) {
+        std::vector<std::string> tokens = next_line("node", 0);
+        if (tokens.size() < 5) {
+            throw EcoevolityError(malformed + " (node)");
+        }
+        NodeRecord record;
+        record.index = static_cast<int>(checkpoint::string_to_integer(tokens.at(1)));
+        record.height_id = static_cast<long>(checkpoint::string_to_integer(tokens.at(2)));
+        record.size_id = checkpoint::string_to_unsigned(tokens.at(3));
+        unsigned long n_children = checkpoint::string_to_unsigned(tokens.at(4));
+        if (tokens.size() != (5 + n_children)) {
+            throw EcoevolityError(malformed + " (node children)");
+        }
+        for (unsigned long c = 0; c < n_children; ++c) {
+            int child = static_cast<int>(checkpoint::string_to_integer(tokens.at(5 + c)));
+            if (seen_as_child.count(child) > 0) {
+                throw EcoevolityError(malformed + " (node with two parents)");
+            }
+            seen_as_child.insert(child);
+            record.children.push_back(child);
+        }
+        if (n_children == 0) {
+            ++n_leaf_records;
+            if (record.height_id != -1) {
+                throw EcoevolityError(malformed + " (leaf height)");
+            }
+        }
+        else if ((n_children < 2) ||
+                (record.height_id < 0) ||
+                (static_cast<unsigned long>(record.height_id) >= n_heights)) {
+            throw EcoevolityError(malformed + " (internal node)");
+        }
+        if (record.size_id >= n_sizes) {
+            throw EcoevolityError(malformed + " (population size id)");
+        }
+        if (record_by_index.count(record.index) > 0) {
+            throw EcoevolityError(malformed + " (duplicate node index)");
+        }
+        record_by_index[record.index] = records.size();
+        records.push_back(record);
+    }
+    if (n_leaf_records != n_leaves) {
+        throw EcoevolityError(mismatch);
+    }
+    for (auto const & record : records) {
+        for (int child : record.children) {
+            if (record_by_index.count(child) < 1) {
+                throw EcoevolityError(malformed + " (unknown child)");
+            }
+        }
+    }
+    // First record is the root, so no node can list it as a child
+    if ((seen_as_child.count(records.at(0).index) > 0) ||
+            (seen_as_child.size() != (n_nodes - 1)) ||
+            (records.at(0).children.empty())) {
+        throw EcoevolityError(malformed + " (root)");
+    }
+
+    std::vector<std::string> tokens = next_line("node_heights", 0);
+    if ((tokens.size() < 2) ||
+            (checkpoint::string_to_unsigned(tokens.at(1)) != n_heights) ||
+            (tokens.size() != (2 + n_heights))) {
+        throw EcoevolityError(malformed + " (node_heights)");
+    }
+    std::vector<unsigned long> height_order;
+    for (unsigned long i = 0; i < n_heights; ++i) {
+        unsigned long id = checkpoint::string_to_unsigned(tokens.at(2 + i));
+        if (id >= n_heights) {
+            throw EcoevolityError(malformed + " (node_heights)");
+        }
+        height_order.push_back(id);
+    }
+    tokens = next_line("pre_ordered_nodes", 0);
+    if ((tokens.size() < 2) ||
+            (checkpoint::string_to_unsigned(tokens.at(1)) != n_nodes) ||
+            (tokens.size() != (2 + n_nodes))) {
+        throw EcoevolityError(malformed + " (pre_ordered_nodes)");
+    }
+    std::vector<int> pre_order_indices;
+    for (unsigned long i = 0; i < n_nodes; ++i) {
+        int index = static_cast<int>(checkpoint::string_to_integer(tokens.at(2 + i)));
+        if (record_by_index.count(index) < 1) {
+            throw EcoevolityError(malformed + " (pre_ordered_nodes)");
+        }
+        pre_order_indices.push_back(index);
+    }
+    if (pos != lines.size()) {
+        throw EcoevolityError(malformed + " (extra lines)");
+    }
+
+    //////////////////////////////////////////////////////////////////////////
+    // Rebuild the tree
+
+    // The leaves (with their data-dependent sizes) are kept; everything
+    // above them is replaced. The root height parameter is also kept, because
+    // it carries the prior and whether it is fixed.
+    std::shared_ptr<PositiveRealParameter> root_height_parameter =
+            this->root_->get_height_parameter();
+    std::map< int, std::shared_ptr<PopulationNode> > nodes_by_index;
+    std::vector< std::shared_ptr<PopulationNode> > old_leaves = this->root_->get_leaves();
+    for (auto const & leaf : old_leaves) {
+        nodes_by_index[leaf->get_index()] = leaf;
+    }
+    for (auto const & leaf : old_leaves) {
+        leaf->remove_parent();
+    }
+
+    std::vector< std::shared_ptr<PositiveRealParameter> > height_params;
+    for (unsigned long i = 0; i < n_heights; ++i) {
+        height_params.push_back(std::make_shared<PositiveRealParameter>(
+                height_values.at(i),
+                static_cast<bool>(height_fixed.at(i))));
+        height_params.back()->store();
+    }
+    // Root height is the one used by the first (root) node record
+    {
+        unsigned long root_height_id = static_cast<unsigned long>(records.at(0).height_id);
+        if (root_height_parameter->is_fixed() != height_fixed.at(root_height_id)) {
+            throw EcoevolityError(mismatch + " (root height)");
+        }
+        if (root_height_parameter->is_fixed()) {
+            if (root_height_parameter->get_value() != height_values.at(root_height_id)) {
+                throw EcoevolityError(mismatch + " (root height)");
+            }
+        }
+        else {
+            root_height_parameter->set_value(height_values.at(root_height_id));
+            root_height_parameter->store();
+        }
+        height_params.at(root_height_id) = root_height_parameter;
+    }
+    std::vector< std::shared_ptr<PositiveRealParameter> > size_params;
+    for (unsigned long i = 0; i < n_sizes; ++i) {
+        std::shared_ptr<ContinuousProbabilityDistribution> prior;
+        if (size_has_prior.at(i)) {
+            prior = this->population_size_prior_;
+        }
+        size_params.push_back(std::make_shared<PositiveRealParameter>(
+                prior,
+                size_values.at(i),
+                static_cast<bool>(size_fixed.at(i))));
+        size_params.back()->store();
+    }
+
+    for (auto const & record : records) {
+        if (record.children.empty()) {
+            auto leaf = nodes_by_index.find(record.index);
+            if (leaf == nodes_by_index.end()) {
+                throw EcoevolityError(mismatch + " (leaf node)");
+            }
+            leaf->second->set_population_size_parameter(size_params.at(record.size_id));
+            continue;
+        }
+        if (nodes_by_index.count(record.index) > 0) {
+            throw EcoevolityError(malformed + " (internal node index collides with a leaf)");
+        }
+        std::shared_ptr<PopulationNode> node = std::make_shared<PopulationNode>(
+                record.index,
+                0.0);
+        node->set_height_parameter(height_params.at(static_cast<unsigned long>(record.height_id)));
+        node->set_population_size_parameter(size_params.at(record.size_id));
+        nodes_by_index[record.index] = node;
+    }
+    for (auto const & record : records) {
+        std::shared_ptr<PopulationNode> parent = nodes_by_index.at(record.index);
+        for (int child : record.children) {
+            parent->add_child(nodes_by_index.at(child));
+        }
+    }
+
+    this->root_ = nodes_by_index.at(records.at(0).index);
+    this->vet_tree();
+    this->node_heights_.clear();
+    for (auto id : height_order) {
+        this->node_heights_.push_back(height_params.at(id));
+    }
+    this->pre_ordered_nodes_.clear();
+    for (int index : pre_order_indices) {
+        this->pre_ordered_nodes_.push_back(nodes_by_index.at(index));
+    }
+    this->refresh_level_ordered_nodes();
+    this->root_->resize_all();
+    this->root_->resize_splits(n_leaves);
+    this->root_->make_all_dirty();
+    this->make_dirty();
+}
+
 double BasePopulationTree::get_ln_prob_of_drawing_node_state(
                 std::shared_ptr<PopulationNode> node) const {
     if (this->population_sizes_are_constrained()) {

@@ -21,10 +21,15 @@
 #define ECOEVOLITY_RNG_HPP
 
 #include <ctime>
+#include <map>
 #include <random>
+#include <sstream>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "assert.hpp"
+#include "error.hpp"
 #include "math_util.hpp"
 
 class RandomNumberGenerator {
@@ -678,6 +683,67 @@ class RandomNumberGenerator {
                     possible_number_of_subsets,
                     split_weight);
             return subsets;
+        }
+
+        // Exact state of the generator, for checkpointing. Besides the engine,
+        // the distribution objects are saved, because some standard library
+        // implementations cache values in them (e.g., normal and gamma
+        // distributions keep a spare normal variate), which affects the
+        // sequence of future draws.
+        void write_state(std::ostream & out) const {
+            out << "seed " << this->seed_ << "\n";
+            out << "engine " << this->engine_ << "\n";
+            out << "uniform_real " << this->uniform_real_rng_ << "\n";
+            out << "uniform_int " << this->uniform_int_rng_ << "\n";
+            out << "uniform_positive_int " << this->uniform_positive_int_rng_ << "\n";
+            out << "gamma " << this->gamma_rng_ << "\n";
+            out << "normal " << this->normal_rng_ << "\n";
+        }
+
+        void read_state(const std::vector<std::string> & lines) {
+            RandomNumberGenerator restored;
+            std::map<std::string, std::string> items;
+            for (auto const & line : lines) {
+                std::string::size_type pos = line.find(' ');
+                if (pos == std::string::npos) {
+                    throw EcoevolityError("RandomNumberGenerator::read_state: malformed line");
+                }
+                items[line.substr(0, pos)] = line.substr(pos + 1);
+            }
+            restored._read_state_item(items, "seed", restored.seed_);
+            restored._read_state_item(items, "engine", restored.engine_);
+            restored._read_state_item(items, "uniform_real", restored.uniform_real_rng_);
+            restored._read_state_item(items, "uniform_int", restored.uniform_int_rng_);
+            restored._read_state_item(items, "uniform_positive_int", restored.uniform_positive_int_rng_);
+            restored._read_state_item(items, "gamma", restored.gamma_rng_);
+            restored._read_state_item(items, "normal", restored.normal_rng_);
+            // Only replace our state once everything was parsed
+            this->seed_ = restored.seed_;
+            this->engine_ = restored.engine_;
+            this->uniform_real_rng_ = restored.uniform_real_rng_;
+            this->uniform_int_rng_ = restored.uniform_int_rng_;
+            this->uniform_positive_int_rng_ = restored.uniform_positive_int_rng_;
+            this->gamma_rng_ = restored.gamma_rng_;
+            this->normal_rng_ = restored.normal_rng_;
+        }
+
+    protected:
+        template <typename T>
+        void _read_state_item(
+                const std::map<std::string, std::string> & items,
+                const std::string & key,
+                T & value) {
+            auto item = items.find(key);
+            if (item == items.end()) {
+                throw EcoevolityError(
+                        "RandomNumberGenerator::read_state: missing \'" + key + "\'");
+            }
+            std::istringstream in(item->second);
+            in >> value;
+            if (in.fail()) {
+                throw EcoevolityError(
+                        "RandomNumberGenerator::read_state: could not parse \'" + key + "\'");
+            }
         }
 };
 

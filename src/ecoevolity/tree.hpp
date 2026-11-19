@@ -29,6 +29,7 @@
 #include "error.hpp"
 #include "debug.hpp"
 #include "assert.hpp"
+#include "checkpoint.hpp"
 #include "general_tree_settings.hpp"
 
 
@@ -444,6 +445,18 @@ class BasePopulationTree : public BaseTree<PopulationNode> {
                 const unsigned int generation_index,
                 const std::string& delimiter = "\t",
                 const bool short_summary = false) const;
+
+        // Write everything about the current state of the tree (topology,
+        // node heights and how they are shared among nodes, population sizes,
+        // and the other parameters) in a form that restores it exactly.
+        // Floating point numbers are written as hexadecimal, so they
+        // round-trip without any loss of precision.
+        void write_checkpoint_state(std::ostream & out) const;
+
+        // Restore the state written by write_checkpoint_state. The tree must
+        // have been created from the same settings and data as the tree that
+        // wrote the state.
+        void read_checkpoint_state(const std::vector<std::string> & lines);
 };
 
 

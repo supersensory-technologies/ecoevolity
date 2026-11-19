@@ -260,6 +260,27 @@ class GeneralTreeOperatorSchedule {
             out << std::flush;
         }
 
+        // State of every operator (tuning parameters, accept/reject counts,
+        // auto-optimization counters), in schedule order, for checkpointing
+        void write_checkpoint_state(std::ostream & out) const {
+            out << this->operators_.size() << "\n";
+            for (auto const & op : this->operators_) {
+                out << op->checkpoint_state() << "\n";
+            }
+        }
+
+        void read_checkpoint_state(const std::vector<std::string> & lines) {
+            if (lines.empty() ||
+                    (checkpoint::string_to_unsigned(lines.at(0)) != this->operators_.size()) ||
+                    (lines.size() != (this->operators_.size() + 1))) {
+                throw EcoevolityError(
+                        "The number of operators in the checkpoint does not match the number of operators in the configuration");
+            }
+            for (unsigned int i = 0; i < this->operators_.size(); ++i) {
+                this->operators_.at(i)->restore_checkpoint_state(lines.at(i + 1));
+            }
+        }
+
         std::set<std::string> write_op_settings(
                 std::ostream & out,
                 const unsigned int indent_level = 0) const {
