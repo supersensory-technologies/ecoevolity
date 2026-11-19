@@ -10,4 +10,5 @@
     background
     biallelic-character-data
     yaml-config
+    checkpoint-resume
     tutorials/index

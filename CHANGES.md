@@ -1,3 +1,42 @@
+Unreleased
+==========
+
+New features
+------------
+
+-   Phycoeval can now be stopped and resumed without changing its output.
+
+    -   ``--checkpoint`` and ``--checkpoint-every=N`` turn on checkpointing:
+        every ``N`` generations (a multiple of ``sample_frequency``; default
+        100 samples' worth), everything needed to continue the chain is
+        written atomically to ``<prefix><config-stem>-checkpoint-run-1.txt``
+        (floating point values at full precision, the state of the random
+        number generator, and the tuning parameters and counters of all
+        operators), after the log files are flushed to disk.
+    -   With checkpointing on, ``SIGINT``, ``SIGTERM`` and ``SIGHUP`` (unless
+        ignored) make phycoeval finish the current generation, write a
+        checkpoint, and exit with status 75. A second signal exits
+        immediately with status 76. Without checkpointing, signals are not
+        handled, as before.
+    -   ``--resume=CHECKPOINT``, with the same config file, data, and options,
+        continues the run. The checkpoint is checked against the config file
+        and data (hashes), seed, ``--prefix``, chain length, and other
+        options. The state, tree, and operator logs are rolled back to the
+        checkpoint (so a ``kill -9`` after a periodic checkpoint is fine) and
+        appended to. The resulting logs are byte-identical to the logs of
+        an uninterrupted run.
+    -   Without the new options, the output of phycoeval is unchanged.
+
+    See the new "Stopping and Resuming Runs" page of the phycoeval
+    documentation.
+
+Bug fixes
+---------
+
+-   Fixing a crash at start up of the programs that print a banner when the
+    version string (which includes the name of the git branch when built from a
+    git checkout) is longer than the banner.
+
 Version 1.1.1
 =============
 
