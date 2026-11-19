@@ -1,0 +1,50 @@
+---
+# Small generalized-tree-space analysis, used to test checkpointing and
+# resuming of phycoeval. All operators are used, and the tunable ones
+# auto-optimize their tuning parameters.
+data:
+    ploidy: 2
+    constant_sites_removed: false
+    yaml_allele_counts:
+        path: species-6-genomes-2-chars-300-simulated.yml
+tree_model:
+    tree_space: generalized
+    starting_tree: random
+    tree_prior:
+        uniform_root_and_betas:
+            parameters:
+                root_height:
+                    estimate: true
+                    prior:
+                        gamma_distribution:
+                            shape: 10.0
+                            mean: 0.05
+                alpha_of_node_height_beta_prior:
+                    value: 1.0
+                    estimate: true
+                    prior:
+                        exponential_distribution:
+                            mean: 1.0
+branch_parameters:
+    population_size:
+        equal_population_sizes: false
+        value: 0.004
+        estimate: true
+        prior:
+            gamma_distribution:
+                shape: 20.0
+                mean: 0.004
+mutation_parameters:
+    freq_1:
+        value: 0.5
+        estimate: true
+        prior:
+            beta_distribution:
+                alpha: 2.0
+                beta: 2.0
+    mutation_rate:
+        value: 1.0
+        estimate: false
+mcmc_settings:
+    chain_length: 2000
+    sample_frequency: 50

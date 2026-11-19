@@ -49,3 +49,25 @@ To use them:
     Before running the tests it will source all of the same files as
     `prep-tests.sh` to make sure any libraries dynamically linked to test-suite
     executable can be found.
+
+# Testing phycoeval checkpointing and resuming
+
+The `test-checkpoint-resume.sh` script is an end-to-end test of phycoeval's
+`--checkpoint-every`, `--checkpoint`, and `--resume` options. It uses the
+synthetic data and config in `../test/data` (`config-checkpoint-resume.yml`).
+It checks that, for a fixed seed, the state, tree, and operator logs of
+
+-   an uninterrupted run,
+-   a run stopped with `SIGTERM` (and again with `SIGINT`) and resumed, and
+-   a run killed with `SIGKILL` after a periodic checkpoint and resumed
+
+are byte-identical, and (optionally) that a run without the new options is
+byte-identical to the output of an unmodified build. To do the latter, build the
+upstream `v1.1.1` tag in a separate build directory, and give the script both
+executables:
+
+    dev-tools/test-checkpoint-resume.sh path/to/build/src/ecoevolity/phycoeval path/to/v1.1.1-build/src/ecoevolity/phycoeval
+
+The script takes a few minutes, and exits with a non-zero status if any check
+fails. The same behavior is also covered by `test_checkpoint.cpp` in the unit
+test suite.

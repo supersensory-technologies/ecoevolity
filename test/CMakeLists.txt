@@ -12,6 +12,7 @@ else()
     MESSAGE(STATUS "  Compiling subset of fast unit tests")
     set(ECOEVOLITY_TEST_SOURCES
         "${TEST_DIR}/test_error.cpp"
+        "${TEST_DIR}/test_checkpoint.cpp"
         "${TEST_DIR}/test_data.cpp"
         "${TEST_DIR}/test_general_tree_settings.cpp"
         "${TEST_DIR}/test_math_util.cpp"
