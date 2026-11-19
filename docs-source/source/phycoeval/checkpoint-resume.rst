@@ -74,8 +74,10 @@ Stopping a run
 
 If checkpointing is on, |phyco|_ stops cleanly when it receives ``SIGINT``
 (``Ctrl-C``), ``SIGTERM`` (the default signal of ``kill``, and what a system
-sends when it shuts down or reboots), or ``SIGHUP`` (unless it is being
-ignored, as it is by ``nohup``).
+sends when it shuts down or reboots), or ``SIGHUP``.
+A signal that was already being ignored when |phyco|_ started stays ignored:
+for example, ``SIGHUP`` under ``nohup``, or ``SIGINT`` for a run that a
+script started in the background with ``&``.
 It then
 
 1.  finishes the generation it is in,
@@ -110,8 +112,9 @@ Any other non-zero status (or termination by a signal) means an error.
 Resuming a run
 *****************
 
-To continue a run, repeat the command you used to start it, and add
-``--resume`` with the path to the checkpoint file::
+To continue a run, go to the directory you started it from, repeat the
+command you used to start it, and add ``--resume`` with the path to the
+checkpoint file::
 
     phycoeval --seed 12345 --checkpoint-every 100000 \
         --resume phycoeval-config-checkpoint-run-1.txt \
@@ -153,3 +156,7 @@ without resuming.
     The checkpoint format is not designed to move between versions.
     Do not edit or move the log files, and do not change the config file,
     between stopping and resuming.
+    The checkpoint stores the paths of the log files as they were given
+    (relative to the directory the run was started from), so resume from the
+    same directory; otherwise |phyco|_ stops with an error that a log file
+    does not exist, and does not touch any files.

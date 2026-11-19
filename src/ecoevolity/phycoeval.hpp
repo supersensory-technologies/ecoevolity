@@ -169,8 +169,9 @@ int phycoeval_main(int argc, char * argv[]) {
                   "SIGINT (Ctrl-C) or SIGTERM, finish the current generation, "
                   "write a checkpoint, and exit with status "
                   "75. A run can be continued from its checkpoint with "
-                  "\'--resume\', and the output is identical to that of a "
-                  "run that was never interrupted. A second signal exits "
+                  "\'--resume\'; with the same build of phycoeval, the "
+                  "output is identical to that of a run that was never "
+                  "interrupted. A second signal exits "
                   "immediately (status 76). Default: No checkpointing, "
                   "signals are not handled.");
     parser.add_option("--checkpoint-every")
@@ -188,7 +189,9 @@ int phycoeval_main(int argc, char * argv[]) {
             .dest("resume")
             .help("Continue a run from the given checkpoint file. Use the "
                   "same config file, data, and options as the run that wrote "
-                  "the checkpoint (the seed, if given, must match). The "
+                  "the checkpoint (the seed, if given, must match), and run "
+                  "it from the same directory, because the log paths are "
+                  "stored as they were given. The "
                   "state, tree, and operator logs of the run are appended "
                   "to. Checkpointing stays on, and the checkpoint file is "
                   "updated in place.");
@@ -455,6 +458,14 @@ int phycoeval_main(int argc, char * argv[]) {
     std::ofstream operator_log_stream;
 
     if (resume_requested) {
+        // Check that all the logs are the ones the checkpoint was taken
+        // from, before changing any of them
+        checkpoint::check_log_file(
+                checkpoint_control.resume_file, "tree", tree_log_path);
+        checkpoint::check_log_file(
+                checkpoint_control.resume_file, "state", state_log_path);
+        checkpoint::check_log_file(
+                checkpoint_control.resume_file, "operator", operator_log_path);
         // Cut off anything logged after the checkpoint, so that we continue
         // appending exactly where the checkpointed run left off
         checkpoint::roll_back_log_file(

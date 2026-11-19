@@ -13,18 +13,20 @@ New features
         (floating point values at full precision, the state of the random
         number generator, and the tuning parameters and counters of all
         operators), after the log files are flushed to disk.
-    -   With checkpointing on, ``SIGINT``, ``SIGTERM`` and ``SIGHUP`` (unless
-        ignored) make phycoeval finish the current generation, write a
-        checkpoint, and exit with status 75. A second signal exits
-        immediately with status 76. Without checkpointing, signals are not
-        handled, as before.
-    -   ``--resume=CHECKPOINT``, with the same config file, data, and options,
-        continues the run. The checkpoint is checked against the config file
-        and data (hashes), seed, ``--prefix``, chain length, and other
-        options. The state, tree, and operator logs are rolled back to the
-        checkpoint (so a ``kill -9`` after a periodic checkpoint is fine) and
-        appended to. The resulting logs are byte-identical to the logs of
-        an uninterrupted run.
+    -   With checkpointing on, ``SIGINT``, ``SIGTERM`` and ``SIGHUP`` make
+        phycoeval finish the current generation, write a checkpoint, and exit
+        with status 75. A second signal exits immediately with status 76. A
+        signal that was ignored when phycoeval started (e.g., ``SIGHUP``
+        under ``nohup``) stays ignored. Without checkpointing, signals are
+        not handled, as before.
+    -   ``--resume=CHECKPOINT``, run from the same directory with the same
+        config file, data, and options, continues the run. The checkpoint is
+        checked against the config file and data (hashes), seed,
+        ``--prefix``, chain length, and other options. The state, tree, and
+        operator logs are checked, then rolled back to the checkpoint (so a
+        ``kill -9`` after a periodic checkpoint is fine) and appended to.
+        With the same build of phycoeval, the resulting logs are
+        byte-identical to the logs of an uninterrupted run.
     -   Without the new options, the output of phycoeval is unchanged.
 
     See the new "Stopping and Resuming Runs" page of the phycoeval

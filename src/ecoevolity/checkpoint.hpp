@@ -28,6 +28,7 @@
 #ifndef ECOEVOLITY_CHECKPOINT_HPP
 #define ECOEVOLITY_CHECKPOINT_HPP
 
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -510,9 +511,9 @@ inline void record_log_file(
     file.add_field("log_" + tag, value.str());
 }
 
-// Make sure a log file is the one the checkpoint was taken from, and cut off
-// everything after the checkpoint
-inline void roll_back_log_file(
+// Make sure a log file is the one the checkpoint was taken from; returns the
+// size it had when the checkpoint was written
+inline unsigned long long check_log_file(
         const CheckpointFile & file,
         const std::string & tag,
         const std::string & path) {
@@ -540,6 +541,17 @@ inline void roll_back_log_file(
         throw EcoevolityError(
                 pre + "does not match the checkpoint; it was changed after the checkpoint was written");
     }
+    return size;
+}
+
+// Make sure a log file is the one the checkpoint was taken from, and cut off
+// everything after the checkpoint. To leave all the logs alone if any of
+// them does not match, check them all with check_log_file first.
+inline void roll_back_log_file(
+        const CheckpointFile & file,
+        const std::string & tag,
+        const std::string & path) {
+    unsigned long long size = check_log_file(file, tag, path);
     if (file_size(path) > size) {
         truncate_file(path, size);
     }
@@ -581,30 +593,43 @@ struct Control {
 //
 // Handlers are only installed when checkpointing is turned on. The first
 // signal sets a flag that the MCMC loop polls once per generation. A second
-// signal exits immediately.
+// signal exits immediately. A signal that was being ignored when the run
+// started (e.g., SIGINT for a job started in the background by a script, or
+// SIGHUP under "nohup") stays ignored.
+//
+// The flag is a lock-free atomic rather than a volatile sig_atomic_t because,
+// with multiple threads, the handler can run on a different thread from the
+// one that polls the flag.
 //////////////////////////////////////////////////////////////////////////////
 
-inline volatile std::sig_atomic_t & signal_flag() {
-    static volatile std::sig_atomic_t flag = 0;
+// Only lock-free atomics may be used in a signal handler
+static_assert(ATOMIC_INT_LOCK_FREE == 2,
+        "checkpoint: std::atomic<int> has to be lock-free to be used in a signal handler");
+
+inline std::atomic<int> & signal_flag() {
+    static std::atomic<int> flag(0);
     return flag;
 }
 
 inline void stop_signal_handler(int signal_number) {
-    if (signal_flag() != 0) {
+    if (signal_flag().exchange(signal_number) != 0) {
         const char message[] =
                 "\nSecond signal received; exiting immediately without writing a new checkpoint.\n";
         ssize_t ignored = ::write(2, message, sizeof(message) - 1);
         (void)ignored;
         ::_exit(EXIT_STATUS_FORCED);
     }
-    signal_flag() = static_cast<std::sig_atomic_t>(signal_number);
 }
 
+struct SavedSignalAction {
+    struct sigaction action;
+    bool installed;
+};
+
 struct SavedSignalActions {
-    struct sigaction interrupt;
-    struct sigaction terminate;
-    struct sigaction hangup;
-    bool hangup_installed;
+    SavedSignalAction interrupt;
+    SavedSignalAction terminate;
+    SavedSignalAction hangup;
     bool installed;
 };
 
@@ -613,27 +638,43 @@ inline SavedSignalActions & saved_signal_actions() {
     return saved;
 }
 
+// Install the stop handler for a signal, unless the signal is being ignored
+inline void install_stop_signal_handler(
+        int signal_number,
+        const struct sigaction & action,
+        SavedSignalAction & saved) {
+    saved.installed = false;
+    struct sigaction current;
+    if ((sigaction(signal_number, NULL, &current) == 0) &&
+            (current.sa_handler != SIG_IGN) &&
+            (sigaction(signal_number, &action, &saved.action) == 0)) {
+        saved.installed = true;
+    }
+}
+
+inline void restore_stop_signal_handler(
+        int signal_number,
+        SavedSignalAction & saved) {
+    if (saved.installed) {
+        sigaction(signal_number, &saved.action, NULL);
+        saved.installed = false;
+    }
+}
+
 inline void install_stop_signal_handlers() {
     SavedSignalActions & saved = saved_signal_actions();
     if (saved.installed) {
         return;
     }
-    signal_flag() = 0;
+    signal_flag().store(0);
     struct sigaction action;
     std::memset(&action, 0, sizeof(action));
     action.sa_handler = stop_signal_handler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = 0;
-    sigaction(SIGINT, &action, &saved.interrupt);
-    sigaction(SIGTERM, &action, &saved.terminate);
-    // Respect "nohup": a hangup that was being ignored stays ignored
-    saved.hangup_installed = false;
-    struct sigaction current;
-    if ((sigaction(SIGHUP, NULL, &current) == 0) &&
-            (current.sa_handler != SIG_IGN)) {
-        sigaction(SIGHUP, &action, &saved.hangup);
-        saved.hangup_installed = true;
-    }
+    install_stop_signal_handler(SIGINT, action, saved.interrupt);
+    install_stop_signal_handler(SIGTERM, action, saved.terminate);
+    install_stop_signal_handler(SIGHUP, action, saved.hangup);
     saved.installed = true;
 }
 
@@ -642,18 +683,16 @@ inline void restore_stop_signal_handlers() {
     if (! saved.installed) {
         return;
     }
-    sigaction(SIGINT, &saved.interrupt, NULL);
-    sigaction(SIGTERM, &saved.terminate, NULL);
-    if (saved.hangup_installed) {
-        sigaction(SIGHUP, &saved.hangup, NULL);
-    }
+    restore_stop_signal_handler(SIGINT, saved.interrupt);
+    restore_stop_signal_handler(SIGTERM, saved.terminate);
+    restore_stop_signal_handler(SIGHUP, saved.hangup);
     saved.installed = false;
-    signal_flag() = 0;
+    signal_flag().store(0);
 }
 
 // Zero if no stop was requested; otherwise the signal number
 inline int pending_stop_signal() {
-    return static_cast<int>(signal_flag());
+    return signal_flag().load();
 }
 
 // Intercept stop signals for as long as the object exists (if active)
