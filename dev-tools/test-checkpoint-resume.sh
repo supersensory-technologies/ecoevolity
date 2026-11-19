@@ -89,16 +89,23 @@ compare_logs () {
     fi
 }
 
-# Wait (up to ~10 minutes) until a file contains a line matching a pattern
+# Wait (up to ~10 minutes) until a file contains a line matching a pattern.
+# Gives up at once if the process PID (third argument) has exited, e.g. when
+# phycoeval rejects its options.
 wait_for_line () {
     local file="$1"
     local pattern="$2"
+    local pid="$3"
     local tries=0
     while [ $tries -lt 6000 ]
     do
         if [ -f "$file" ] && grep -q -E "$pattern" "$file"
         then
             return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null
+        then
+            return 1
         fi
         sleep 0.1
         tries=$((tries + 1))
@@ -143,7 +150,7 @@ cd "${work_dir}/B1"
 pid=$!
 # The checkpoint at generation 500 is written right after its sample; wait
 # until the run is a bit past that
-if ! wait_for_line "${stem}-state-run-1.log" "^600	"
+if ! wait_for_line "${stem}-state-run-1.log" "^600	" $pid
 then
     kill -9 $pid
     fail "B1: run did not reach generation 600"
@@ -189,7 +196,7 @@ fi
 # Resume, and stop again (second signal after resuming), then resume to the end
 "${phycoeval}" --resume=${stem}-checkpoint-run-1.txt ${config_name} > stdout2.txt 2>&1 &
 pid=$!
-if ! wait_for_line "${stem}-state-run-1.log" "^1[0-9]00	"
+if ! wait_for_line "${stem}-state-run-1.log" "^1[0-9]00	" $pid
 then
     kill -9 $pid
     fail "B1: resumed run did not reach generation 1000"
@@ -229,7 +236,7 @@ cd "${work_dir}/B2"
 pid=$!
 # Past the checkpoint of generation 1000 and part-way to the next samples, so
 # there is output after the checkpoint that has to be cut off
-if ! wait_for_line "${stem}-state-run-1.log" "^1100	"
+if ! wait_for_line "${stem}-state-run-1.log" "^1100	" $pid
 then
     kill -9 $pid
     fail "B2: run did not reach generation 1100"
