@@ -20,6 +20,5 @@
 #include "phycoeval.hpp"
 
 int main(int argc, char *argv[]) {
-    phycoeval_main<BasePopulationTree>(argc, argv);
-    return 0;
+    return phycoeval_main<BasePopulationTree>(argc, argv);
 }
