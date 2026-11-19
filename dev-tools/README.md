@@ -58,8 +58,10 @@ synthetic data and config in `../test/data` (`config-checkpoint-resume.yml`).
 It checks that, for a fixed seed, the state, tree, and operator logs of
 
 -   an uninterrupted run,
--   a run stopped with `SIGTERM` (and again with `SIGINT`) and resumed, and
--   a run killed with `SIGKILL` after a periodic checkpoint and resumed
+-   a run stopped with `SIGTERM` (and again with `SIGINT`) and resumed,
+-   a run killed with `SIGKILL` after a periodic checkpoint and resumed, and
+-   a run with checkpointing that is sent a `SIGINT` it was started ignoring
+    (and so finishes)
 
 are byte-identical, and (optionally) that a run without the new options is
 byte-identical to the output of an unmodified build. To do the latter, build the
@@ -68,6 +70,7 @@ executables:
 
     dev-tools/test-checkpoint-resume.sh path/to/build/src/ecoevolity/phycoeval path/to/v1.1.1-build/src/ecoevolity/phycoeval
 
-The script takes a few minutes, and exits with a non-zero status if any check
+The script needs `perl` (to start a background run with `SIGINT` not ignored),
+takes a few minutes, and exits with a non-zero status if any check
 fails. The same behavior is also covered by `test_checkpoint.cpp` in the unit
 test suite.

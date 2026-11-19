@@ -14,7 +14,8 @@
 #   C. a run without any of the new options is byte-identical to a run of an
 #      unmodified build (e.g., upstream v1.1.1).
 #
-# It also checks the exit statuses and that a mismatched config is refused.
+# It also checks the exit statuses, that a mismatched config is refused, and
+# that a SIGINT the run was started ignoring stays ignored.
 #
 # usage: dev-tools/test-checkpoint-resume.sh PHYCOEVAL [REFERENCE-PHYCOEVAL]
 #
@@ -119,6 +120,14 @@ wait_for_exit () {
     exit_status=$?
 }
 
+# Run a command with SIGINT handled the default way. A script without job
+# control starts background commands with SIGINT ignored, and phycoeval
+# leaves an ignored SIGINT ignored. Only for background commands ("... &"):
+# the exec makes $! the PID of the command itself.
+with_sigint () {
+    exec perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!\n"' "$@"
+}
+
 #############################################################################
 # A. Uninterrupted run (no checkpointing)
 #############################################################################
@@ -194,7 +203,7 @@ else
 fi
 
 # Resume, and stop again (second signal after resuming), then resume to the end
-"${phycoeval}" --resume=${stem}-checkpoint-run-1.txt ${config_name} > stdout2.txt 2>&1 &
+with_sigint "${phycoeval}" --resume=${stem}-checkpoint-run-1.txt ${config_name} > stdout2.txt 2>&1 &
 pid=$!
 if ! wait_for_line "${stem}-state-run-1.log" "^1[0-9]00	" $pid
 then
@@ -261,18 +270,28 @@ cd "${work_dir}"
 compare_logs "B2: SIGKILL + resume gives the same logs as an uninterrupted run" A B2
 
 #############################################################################
-# B3. Checkpointing alone does not change the output
+# B3. Checkpointing alone does not change the output, and a SIGINT that was
+#     ignored when the run started stays ignored
 #############################################################################
 echo ""
 echo "=== B3: checkpointing without interruption ==="
 new_run_dir B3
-( cd "${work_dir}/B3" && "${phycoeval}" --seed ${seed} --checkpoint-every=500 ${config_name} > stdout.txt 2>&1 )
-if [ $? -eq 0 ]
+cd "${work_dir}/B3"
+# Started in the background without job control, so SIGINT is ignored
+"${phycoeval}" --seed ${seed} --checkpoint-every=500 ${config_name} > stdout.txt 2>&1 &
+pid=$!
+if wait_for_line "${stem}-state-run-1.log" "^600	" $pid
 then
-    pass "B3: run with checkpointing finished"
-else
-    fail "B3: run with checkpointing failed"
+    kill -INT $pid
 fi
+wait_for_exit $pid
+if [ $exit_status -eq 0 ]
+then
+    pass "B3: run with checkpointing finished, ignoring SIGINT"
+else
+    fail "B3: run with checkpointing failed (exit status ${exit_status})"
+fi
+cd "${work_dir}"
 compare_logs "B3: run with checkpointing is identical to a run without" A B3
 
 #############################################################################

@@ -81,7 +81,12 @@ int run_phycoeval(const std::vector<std::string> & arguments) {
             &argv[0]);
 }
 
-void write_config(const std::string & path) {
+// With shared_sizes, the model is set up like many empirical analyses: one
+// population size shared by all branches, a comb starting tree, a fixed
+// alpha of the beta prior on node heights, and fixed state frequencies.
+// Shared and fixed parameters are saved and restored differently from
+// branch-specific and estimated ones.
+void write_config(const std::string & path, bool shared_sizes = false) {
     std::ofstream os;
     os.open(path);
     os << "data:\n";
@@ -91,7 +96,7 @@ void write_config(const std::string & path) {
     os << "        path: species-6-genomes-2-chars-300-simulated.yml\n";
     os << "tree_model:\n";
     os << "    tree_space: generalized\n";
-    os << "    starting_tree: random\n";
+    os << "    starting_tree: " << (shared_sizes ? "comb" : "random") << "\n";
     os << "    tree_prior:\n";
     os << "        uniform_root_and_betas:\n";
     os << "            parameters:\n";
@@ -101,15 +106,17 @@ void write_config(const std::string & path) {
     os << "                        gamma_distribution:\n";
     os << "                            shape: 10.0\n";
     os << "                            mean: 0.05\n";
-    os << "                alpha_of_node_height_beta_prior:\n";
-    os << "                    value: 1.0\n";
-    os << "                    estimate: true\n";
-    os << "                    prior:\n";
-    os << "                        exponential_distribution:\n";
-    os << "                            mean: 1.0\n";
+    if (! shared_sizes) {
+        os << "                alpha_of_node_height_beta_prior:\n";
+        os << "                    value: 1.0\n";
+        os << "                    estimate: true\n";
+        os << "                    prior:\n";
+        os << "                        exponential_distribution:\n";
+        os << "                            mean: 1.0\n";
+    }
     os << "branch_parameters:\n";
     os << "    population_size:\n";
-    os << "        equal_population_sizes: false\n";
+    os << "        equal_population_sizes: " << (shared_sizes ? "true" : "false") << "\n";
     os << "        value: 0.004\n";
     os << "        estimate: true\n";
     os << "        prior:\n";
@@ -119,11 +126,16 @@ void write_config(const std::string & path) {
     os << "mutation_parameters:\n";
     os << "    freq_1:\n";
     os << "        value: 0.5\n";
-    os << "        estimate: true\n";
-    os << "        prior:\n";
-    os << "            beta_distribution:\n";
-    os << "                alpha: 2.0\n";
-    os << "                beta: 2.0\n";
+    if (shared_sizes) {
+        os << "        estimate: false\n";
+    }
+    else {
+        os << "        estimate: true\n";
+        os << "        prior:\n";
+        os << "            beta_distribution:\n";
+        os << "                alpha: 2.0\n";
+        os << "                beta: 2.0\n";
+    }
     os << "    mutation_rate:\n";
     os << "        value: 1.0\n";
     os << "        estimate: false\n";
@@ -331,9 +343,20 @@ TEST_CASE("Testing phycoeval checkpoint option errors", "[checkpoint]") {
 TEST_CASE("Testing phycoeval stop and resume gives identical output",
         "[checkpoint]") {
 
-    SECTION("Testing SIGTERM, SIGKILL-like, and resume") {
+    // Catch runs the test case once for each of these sections, each time
+    // followed by the stop-and-resume test below them
+    bool shared_sizes = false;
+    SECTION("Testing with branch-specific population sizes") {
+        shared_sizes = false;
+    }
+    SECTION("Testing with one shared population size") {
+        shared_sizes = true;
+    }
+
+    // SIGTERM, SIGKILL-like, and resume
+    {
         RandomNumberGenerator rng(839798);
-        std::string tag = rng.random_string(10);
+        std::string tag = rng.random_string(10) + (shared_sizes ? "-shared" : "");
         const std::string cfg_path = "data/tmp-config-" + tag + "-ckpt.yml";
         const std::string base = "data/tmp-config-" + tag + "-ckpt";
         const std::string state_path = base + "-state-run-1.log";
@@ -341,7 +364,7 @@ TEST_CASE("Testing phycoeval stop and resume gives identical output",
         const std::string oper_path = base + "-operator-run-1.log";
         const std::string checkpoint_path = base + "-checkpoint-run-1.txt";
         const std::string prefix_a = "data/tmp-a-" + tag + "-";
-        write_config(cfg_path);
+        write_config(cfg_path, shared_sizes);
 
         // Leftovers of an earlier failed run would change the output paths
         const std::string a_base = prefix_a + "tmp-config-" + tag + "-ckpt";
