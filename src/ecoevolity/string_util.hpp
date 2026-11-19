@@ -77,6 +77,10 @@ inline std::string get_indent(unsigned int level = 1) {
 }
 
 inline std::string center(const std::string& s, unsigned int page_width = 70) {
+    if (s.length() >= page_width) {
+        // Nothing to center; avoid wrapping around the unsigned subtraction
+        return s;
+    }
     int w = (int)((page_width - s.length()) / 2);
     std::string indent(w, ' ');
     return indent + s;
