@@ -172,6 +172,13 @@ class QMatrix : public AbstractMatrix {
         double v_;
         double coalescence_rate_;
         unsigned int n_;
+        // Scratch for the complex solve and its central blocks, sized on first use and reused
+        // by every solve on this matrix (12 per matrix exponential). Every
+        // element is written before it is read, so reuse changes no result.
+        std::vector<Complex> solve_xn_;
+        std::vector<Complex> solve_yn_;
+        std::vector<Complex> block_d_;
+        std::vector<Complex> block_e_;
 
     public:
         QMatrix(unsigned int n, double u, double v, double population_size) {
@@ -499,12 +506,12 @@ class QMatrix : public AbstractMatrix {
                 x.at(i).im_ = 0;
             }
             
-            std::vector<Complex> xn (this->n_ + 1);
-            std::vector<Complex> yn (this->n_ + 1);
-            // for (unsigned int i = 0; i < (this->n_ + 1); ++i) {
-            //     xn.at(i) = Complex();
-            //     yn.at(i) = Complex();
-            // }
+            if (this->solve_xn_.size() != this->n_ + 1) {
+                this->solve_xn_.assign(this->n_ + 1, Complex());
+                this->solve_yn_.assign(this->n_ + 1, Complex());
+            }
+            std::vector<Complex> & xn = this->solve_xn_;
+            std::vector<Complex> & yn = this->solve_yn_;
             
             
             unsigned int xptr = x.size() - 1 - this->n_;
@@ -626,14 +633,13 @@ class QMatrix : public AbstractMatrix {
                 }
             }
             else {
-                std::vector<Complex> d (n+1, Complex());
-                // for (unsigned int i = 0; i < n+1; ++i) {
-                //     d.at(i) = Complex();
-                // }
-                std::vector<Complex> e (n+1, Complex());
-                // for (unsigned int i = 0; i < n+1; ++i) {
-                //     e.at(i) = Complex();
-                // }
+                // Reused scratch; sized here too, so a direct call works.
+                if (this->block_d_.size() < n + 1) {
+                    this->block_d_.assign(n + 1, Complex());
+                    this->block_e_.assign(n + 1, Complex());
+                }
+                std::vector<Complex> & d = this->block_d_;
+                std::vector<Complex> & e = this->block_e_;
                 d.at(0).re_ = K.re_;
                 d.at(0).im_ = K.im_;
                 e.at(0).re_ = y.at(0).re_;
